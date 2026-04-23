@@ -147,6 +147,7 @@ def build_workflow(
     input_image_name: str,
     checkpoint_name: str,
     edit_pass: EditPass,
+    mask_mode: str,
     positive_prompt: str,
     negative_prompt: str,
     seed: int,
@@ -171,7 +172,12 @@ def build_workflow(
     workflow[CHECKPOINT_NODE_ID]["inputs"]["ckpt_name"] = checkpoint_name
 
     parser_inputs = workflow[PARSER_NODE_ID]["inputs"]
-    selected_fields = set(_silhouette_minus_head_fields(edit_pass.parser_type))
+    if mask_mode == "silhouette":
+        selected_fields = set(_silhouette_minus_head_fields(edit_pass.parser_type))
+    elif mask_mode == "target":
+        selected_fields = {edit_pass.parser_field}
+    else:
+        raise ValueError(f"Unsupported mask_mode '{mask_mode}'")
     for field_name in _boolean_fields_for_parser(edit_pass.parser_type):
         parser_inputs[field_name] = field_name in selected_fields
 

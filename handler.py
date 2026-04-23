@@ -51,6 +51,8 @@ MASK_SCOPE_NAME = "person_silhouette_minus_head"
 AUTO_TARGET_LONG_SIDE = int(os.environ.get("QWEN_AUTO_TARGET_LONG_SIDE", "1536"))
 AUTO_DENOISE_WIDE = float(os.environ.get("QWEN_AUTO_DENOISE_WIDE", "0.78"))
 AUTO_DENOISE_STANDARD = float(os.environ.get("QWEN_AUTO_DENOISE_STANDARD", "0.82"))
+TARGET_REFINE_DENOISE = float(os.environ.get("QWEN_TARGET_REFINE_DENOISE", "0.9"))
+TARGET_REFINE_STEPS_BONUS = int(os.environ.get("QWEN_TARGET_REFINE_STEPS_BONUS", "2"))
 
 
 def comfy_url(path: str) -> str:
@@ -234,7 +236,7 @@ def extract_output_images(prompt_history: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
-def build_positive_prompt(edit_text: str) -> str:
+def build_positive_prompt(edit_pass: EditPass) -> str:
     return (
         "Regenerate only the masked region covering the person silhouette below the head.\n"
         "Keep the head area unchanged, including face, hairline, hairstyle, expression, and head position.\n"
@@ -245,8 +247,27 @@ def build_positive_prompt(edit_text: str) -> str:
         "Replace the visible outfit consistently across the whole masked region.\n"
         "Do not leave fragments, scraps, seams, or patches of the original clothing unless the user explicitly asks for them.\n"
         "Keep all unmasked regions unchanged.\n"
-        f"User request: {edit_text}"
+        f"Primary garment focus for this pass: {edit_pass.category}.\n"
+        f"User request: {edit_pass.edit_text}"
     )
+
+
+def build_target_refine_positive_prompt(edit_pass: EditPass) -> str:
+    focus_lines = [
+        f"Refine only the masked {edit_pass.category} region for this pass.",
+        f"Fully replace the visible {edit_pass.category.lower()} and remove remnants of the original {edit_pass.category.lower()}.",
+        "Keep anatomy, pose, limbs, hands, and the rest of the outfit stable.",
+    ]
+    if edit_pass.parser_field in {"upper_clothes", "dress", "coat"}:
+        focus_lines.append(
+            "Clean residual old-clothing fragments near hair strands, collar lines, shoulders, and neckline while keeping the hair natural."
+        )
+    if edit_pass.parser_field in {"pants", "skirt", "jumpsuits"}:
+        focus_lines.append(
+            "Ensure the lower-body garment changes clearly and completely instead of keeping the original pants or denim."
+        )
+    focus_lines.append(f"User request: {edit_pass.edit_text}")
+    return "\n".join(focus_lines)
 
 
 def build_negative_prompt(edit_pass: EditPass) -> str:
@@ -329,6 +350,18 @@ def maybe_autotune_denoise(source_bytes: bytes, options: dict[str, Any]) -> None
     options["denoise"] = min(float(options["denoise"]), float(target_denoise))
 
 
+def should_run_target_refinement(edit_pass: EditPass) -> bool:
+    return edit_pass.category != "Outfit"
+
+
+def refinement_denoise(options: dict[str, Any]) -> float:
+    return max(float(options["denoise"]), float(TARGET_REFINE_DENOISE))
+
+
+def refinement_steps(options: dict[str, Any]) -> int:
+    return int(options["steps"]) + int(TARGET_REFINE_STEPS_BONUS)
+
+
 def validate_input(job_input: dict[str, Any]) -> dict[str, Any]:
     if job_input is None:
         raise ValueError("Please provide input.")
@@ -391,15 +424,21 @@ def execute_pass(
     job_id: str,
     client_id: str,
     pass_index: int,
+    stage_name: str,
     current_image_bytes: bytes,
     edit_pass: EditPass,
     options: dict[str, Any],
+    mask_mode: str,
+    positive_prompt: str,
+    negative_prompt: str,
+    denoise: float,
+    steps: int,
 ) -> tuple[bytes, dict[str, Any]]:
-    input_name = f"{job_id}_pass_{pass_index:02d}_input.png"
+    input_name = f"{job_id}_pass_{pass_index:02d}_{stage_name}_input.png"
     upload_image_bytes(input_name, current_image_bytes)
 
     filename_prefix = (
-        f"{DEFAULT_FILENAME_PREFIX}/{job_id}/pass_{pass_index:02d}_{slugify(edit_pass.category)}"
+        f"{DEFAULT_FILENAME_PREFIX}/{job_id}/pass_{pass_index:02d}_{slugify(edit_pass.category)}_{slugify(stage_name)}"
     )
 
     workflow = build_workflow(
@@ -407,14 +446,15 @@ def execute_pass(
         input_image_name=input_name,
         checkpoint_name=options["checkpoint_name"],
         edit_pass=edit_pass,
-        positive_prompt=build_positive_prompt(edit_pass.edit_text),
-        negative_prompt=build_negative_prompt(edit_pass),
+        mask_mode=mask_mode,
+        positive_prompt=positive_prompt,
+        negative_prompt=negative_prompt,
         seed=options["seed"] + pass_index - 1,
-        steps=options["steps"],
+        steps=steps,
         cfg=options["cfg"],
         sampler_name=options["sampler_name"],
         scheduler=options["scheduler"],
-        denoise=options["denoise"],
+        denoise=denoise,
         target_width=options["target_width"],
         target_height=options["target_height"],
         mask_expand_pixels=options["mask_expand_pixels"],
@@ -454,6 +494,8 @@ def execute_pass(
         "parser_field": edit_pass.parser_field,
         "parser_type": edit_pass.parser_type,
         "mask_scope": MASK_SCOPE_NAME,
+        "mask_mode": mask_mode,
+        "stage_name": stage_name,
         "edit_text": edit_pass.edit_text,
         "filename": first_image["filename"],
         "subfolder": first_image.get("subfolder", ""),
@@ -482,11 +524,34 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
                 job_id=job_id,
                 client_id=client_id,
                 pass_index=index,
+                stage_name="silhouette",
                 current_image_bytes=current_bytes,
                 edit_pass=edit_pass,
                 options=options,
+                mask_mode="silhouette",
+                positive_prompt=build_positive_prompt(edit_pass),
+                negative_prompt=build_negative_prompt(edit_pass),
+                denoise=options["denoise"],
+                steps=options["steps"],
             )
             pass_results.append(metadata)
+
+            if should_run_target_refinement(edit_pass):
+                current_bytes, metadata = execute_pass(
+                    job_id=job_id,
+                    client_id=client_id,
+                    pass_index=index,
+                    stage_name="target-refine",
+                    current_image_bytes=current_bytes,
+                    edit_pass=edit_pass,
+                    options=options,
+                    mask_mode="target",
+                    positive_prompt=build_target_refine_positive_prompt(edit_pass),
+                    negative_prompt=build_negative_prompt(edit_pass),
+                    denoise=refinement_denoise(options),
+                    steps=refinement_steps(options),
+                )
+                pass_results.append(metadata)
 
         final_filename = f"{job_id}_final.png"
         artifact = encode_output_artifact(job_id, final_filename, current_bytes)
