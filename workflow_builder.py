@@ -69,6 +69,40 @@ LIP_BOOLEAN_FIELDS = (
     "right_shoe",
 )
 
+ATR_SILHOUETTE_MINUS_HEAD_FIELDS = (
+    "upper_clothes",
+    "skirt",
+    "pants",
+    "dress",
+    "belt",
+    "left_shoe",
+    "right_shoe",
+    "left_leg",
+    "right_leg",
+    "left_arm",
+    "right_arm",
+    "bag",
+    "scarf",
+)
+
+LIP_SILHOUETTE_MINUS_HEAD_FIELDS = (
+    "glove",
+    "upper_clothes",
+    "dress",
+    "coat",
+    "socks",
+    "pants",
+    "jumpsuits",
+    "scarf",
+    "skirt",
+    "left_arm",
+    "right_arm",
+    "left_leg",
+    "right_leg",
+    "left_shoe",
+    "right_shoe",
+)
+
 
 def coerce_seed(seed: int | str | None) -> int:
     if seed is None:
@@ -96,6 +130,14 @@ def _boolean_fields_for_parser(parser_type: str) -> tuple[str, ...]:
         return ATR_BOOLEAN_FIELDS
     if parser_type == "lip":
         return LIP_BOOLEAN_FIELDS
+    raise ValueError(f"Unsupported parser_type '{parser_type}'")
+
+
+def _silhouette_minus_head_fields(parser_type: str) -> tuple[str, ...]:
+    if parser_type == "atr":
+        return ATR_SILHOUETTE_MINUS_HEAD_FIELDS
+    if parser_type == "lip":
+        return LIP_SILHOUETTE_MINUS_HEAD_FIELDS
     raise ValueError(f"Unsupported parser_type '{parser_type}'")
 
 
@@ -129,8 +171,9 @@ def build_workflow(
     workflow[CHECKPOINT_NODE_ID]["inputs"]["ckpt_name"] = checkpoint_name
 
     parser_inputs = workflow[PARSER_NODE_ID]["inputs"]
+    selected_fields = set(_silhouette_minus_head_fields(edit_pass.parser_type))
     for field_name in _boolean_fields_for_parser(edit_pass.parser_type):
-        parser_inputs[field_name] = field_name == edit_pass.parser_field
+        parser_inputs[field_name] = field_name in selected_fields
 
     crop_inputs = workflow[CROP_NODE_ID]["inputs"]
     crop_inputs["mask_expand_pixels"] = int(mask_expand_pixels)
@@ -157,4 +200,3 @@ def build_workflow(
     workflow[SAVE_IMAGE_NODE_ID]["inputs"]["filename_prefix"] = filename_prefix
 
     return workflow
-

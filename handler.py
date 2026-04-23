@@ -42,11 +42,12 @@ DEFAULT_PARSER_MODEL = os.environ.get("QWEN_DEFAULT_PARSER_MODEL", "atr").strip(
 DEFAULT_FILENAME_PREFIX = os.environ.get("QWEN_DEFAULT_FILENAME_PREFIX", "qwen-v19-clothing/output")
 DEFAULT_TARGET_WIDTH = int(os.environ.get("QWEN_DEFAULT_TARGET_WIDTH", "1024"))
 DEFAULT_TARGET_HEIGHT = int(os.environ.get("QWEN_DEFAULT_TARGET_HEIGHT", "1024"))
-DEFAULT_MASK_EXPAND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_EXPAND_PIXELS", "12"))
-DEFAULT_MASK_BLEND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_BLEND_PIXELS", "6"))
-DEFAULT_CONTEXT_EXPAND_FACTOR = float(os.environ.get("QWEN_DEFAULT_CONTEXT_EXPAND_FACTOR", "1.25"))
-DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "32"))
+DEFAULT_MASK_EXPAND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_EXPAND_PIXELS", "36"))
+DEFAULT_MASK_BLEND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_BLEND_PIXELS", "10"))
+DEFAULT_CONTEXT_EXPAND_FACTOR = float(os.environ.get("QWEN_DEFAULT_CONTEXT_EXPAND_FACTOR", "1.55"))
+DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "48"))
 DEFAULT_DEVICE_MODE = os.environ.get("QWEN_DEFAULT_DEVICE_MODE", "gpu").strip().lower()
+MASK_SCOPE_NAME = "person_silhouette_minus_head"
 
 
 def comfy_url(path: str) -> str:
@@ -227,8 +228,10 @@ def extract_output_images(prompt_history: dict[str, Any]) -> list[dict[str, Any]
 
 def build_positive_prompt(edit_text: str) -> str:
     return (
-        "Apply only the requested clothing edit inside the masked garment region.\n"
-        "Preserve identity, face, hair, skin, body shape, pose, hands, framing, lighting, and background.\n"
+        "Regenerate only the masked region covering the person silhouette below the head.\n"
+        "Keep the head area unchanged, including face, hairline, hairstyle, expression, and head position.\n"
+        "Keep pose, limb placement, camera framing, perspective, and body proportions as close to the source image as possible.\n"
+        "If the source clothing is loose, infer hidden body proportions conservatively from visible cues without exaggeration.\n"
         "Keep all unmasked regions unchanged.\n"
         f"User request: {edit_text}"
     )
@@ -236,9 +239,11 @@ def build_positive_prompt(edit_text: str) -> str:
 
 def build_negative_prompt(edit_pass: EditPass) -> str:
     base = (
-        "change face, change identity, different person, different hairstyle, different body, "
-        "different pose, background change, lighting change, extra garments, extra limbs, "
-        "duplicate body parts, warped hands, mask bleed, edits outside clothing, altered skin, altered hair"
+        "change face, change identity, different person, different hairstyle, different expression, "
+        "changed hairline, changed head position, changed head size, different pose, changed arm position, "
+        "changed leg position, changed shoulder width, widened hips, enlarged chest, slimmed waist, "
+        "longer legs, shorter torso, background change, lighting change, extra garments, extra limbs, "
+        "duplicate body parts, warped hands, missing hair, mask bleed, edits outside masked region"
     )
     extras = ", ".join(edit_pass.category_negatives)
     if extras:
@@ -395,6 +400,7 @@ def execute_pass(
         "category": edit_pass.category,
         "parser_field": edit_pass.parser_field,
         "parser_type": edit_pass.parser_type,
+        "mask_scope": MASK_SCOPE_NAME,
         "edit_text": edit_pass.edit_text,
         "filename": first_image["filename"],
         "subfolder": first_image.get("subfolder", ""),

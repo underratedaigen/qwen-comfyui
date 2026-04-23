@@ -253,6 +253,17 @@ def select_parser_for_target(target: GarmentTarget, preferred_parser: str) -> st
     return target.supported_parsers[0]
 
 
+def build_generic_outfit_pass(instruction: str, preferred_parser: str) -> EditPass:
+    return EditPass(
+        category="Outfit",
+        parser_field="upper_clothes",
+        parser_type=preferred_parser,
+        supported_parsers=(preferred_parser,),
+        edit_text=instruction,
+        category_negatives=(),
+    )
+
+
 def parse_instruction(instruction: str, preferred_parser: str = "atr") -> list[EditPass]:
     preferred = validate_parser_name(preferred_parser)
     normalized = normalize_instruction(instruction)
@@ -312,9 +323,6 @@ def parse_instruction(instruction: str, preferred_parser: str = "atr") -> list[E
     if not passes:
         if saw_supported_mention:
             raise InstructionParseError("Could not confidently split the clothing edit into one or more passes.")
-        raise InstructionParseError(
-            "No supported clothing target found. Supported targets include dress, skirt, socks, shirt, top, coat, pants, and jumpsuit."
-        )
+        return [build_generic_outfit_pass(normalized, preferred)]
 
     return passes
-
