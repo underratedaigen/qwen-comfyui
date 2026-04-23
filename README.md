@@ -92,10 +92,19 @@ The remaining practical validation step is to run this against a live ComfyUI co
 
 ## Deployment Notes
 
-For RunPod GitHub deployment:
+Recommended deployment path:
 
-- Build context: `qwen-v19-clothing-runpod-comfyui`
-- Dockerfile path: `Dockerfile`
+- Build the image in GitHub Actions
+- Push it to `ghcr.io`
+- Deploy the image to RunPod with `Import from Docker Registry`
+
+This keeps the source of truth on GitHub but avoids RunPod's GitHub builder, which has recently been failing for some users before the Docker build stage even begins.
+
+The workflow added in `.github/workflows/build-ghcr.yml` publishes:
+
+- `ghcr.io/underratedaigen/qwen-comfyui:sha-<commit>`
+- `ghcr.io/underratedaigen/qwen-comfyui:main`
+- `ghcr.io/underratedaigen/qwen-comfyui:<git-tag>` for release tags
 
 Recommended starting point:
 
@@ -106,6 +115,11 @@ Recommended starting point:
 - GPUs per worker: `1`
 - Flash boot: enabled
 - Attach a network volume if you want the checkpoint and parser weights cached across cold starts
+
+If the package is private on first publish, either:
+
+- change the GHCR package visibility to public in GitHub Packages
+- or add registry credentials in RunPod for `ghcr.io`
 
 ## References
 

@@ -1,13 +1,46 @@
 # RunPod Smoke Test
 
-Use this checklist when you push this repo to GitHub and connect it to RunPod.
+Use this checklist with the GitHub Actions to GHCR workflow, then deploy the published image to RunPod from the container registry.
 
-## GitHub Build Settings
+## Why This Path
 
-- Repository: your repo containing `qwen-v19-clothing-runpod-comfyui/`
-- Branch: the branch you want RunPod to build
-- Build context: `qwen-v19-clothing-runpod-comfyui`
-- Dockerfile path: `Dockerfile`
+The direct RunPod GitHub builder has been intermittently failing for some users at:
+
+- `Successfully cloned repository ...`
+- `Creating cache directory.`
+
+with no Docker build steps after that. This repo now uses GitHub Actions to build the image and `ghcr.io` to deliver it to RunPod instead.
+
+## GitHub Build Step
+
+1. Push to `main`, publish a tag, or run the `Build and Push GHCR Image` workflow manually.
+2. Wait for the workflow to finish in GitHub Actions.
+3. Copy the published image tag.
+
+Preferred tag style:
+
+- `ghcr.io/underratedaigen/qwen-comfyui:sha-<commit>`
+
+Convenience tags:
+
+- `ghcr.io/underratedaigen/qwen-comfyui:main`
+- `ghcr.io/underratedaigen/qwen-comfyui:<git-tag>`
+
+## GHCR Visibility
+
+After the first publish, make sure the package can be pulled by RunPod:
+
+- easiest: set the GHCR package to `Public`
+- otherwise: create registry credentials for `ghcr.io` in RunPod and use those on the endpoint
+
+## RunPod Deploy Settings
+
+In RunPod:
+
+1. Click `New Endpoint`
+2. Choose `Import from Docker Registry`
+3. Use the published image URL, for example:
+   `ghcr.io/underratedaigen/qwen-comfyui:sha-<commit>`
 
 ## Recommended Endpoint Settings
 
@@ -91,7 +124,8 @@ Then test a multi-pass instruction:
 
 ## What Success Looks Like
 
-- The image builds successfully on RunPod from GitHub.
+- The GitHub Actions build publishes successfully to GHCR.
+- RunPod pulls the GHCR image successfully.
 - Worker startup downloads the checkpoint and parser weights.
 - ComfyUI starts without node import errors.
 - The handler returns an `images` array.
@@ -99,6 +133,7 @@ Then test a multi-pass instruction:
 
 ## Most Likely Failure Points
 
+- GHCR package visibility or registry auth
 - Qwen checkpoint download URL or size-related cold start delays
 - parser model downloads
 - `nodes_qwen.py` replacement path
@@ -109,8 +144,9 @@ Then test a multi-pass instruction:
 
 Check, in this order:
 
-1. Build logs for Docker image failures
-2. Worker startup logs for checkpoint or parser download failures
-3. ComfyUI logs for custom-node import errors
-4. Prompt execution logs for workflow validation errors
-5. Response payload for the exact failing node id or schema mismatch
+1. GitHub Actions logs for Docker build failures
+2. RunPod startup logs for image pull or auth failures
+3. Worker startup logs for checkpoint or parser download failures
+4. ComfyUI logs for custom-node import errors
+5. Prompt execution logs for workflow validation errors
+6. Response payload for the exact failing node id or schema mismatch
