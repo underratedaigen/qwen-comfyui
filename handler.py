@@ -33,7 +33,7 @@ COMFY_STARTUP_POLL_INTERVAL_S = float(os.environ.get("COMFY_STARTUP_POLL_INTERVA
 WORKFLOW_TEMPLATE_DIR = Path(__file__).resolve().parent / "workflow_templates"
 
 QWEN_CHECKPOINT_NAME = os.environ.get("QWEN_CHECKPOINT_NAME", "Qwen-Rapid-AIO-NSFW-v19.safetensors")
-DEFAULT_STEPS = int(os.environ.get("QWEN_DEFAULT_STEPS", "6"))
+DEFAULT_STEPS = int(os.environ.get("QWEN_DEFAULT_STEPS", "8"))
 DEFAULT_CFG = float(os.environ.get("QWEN_DEFAULT_CFG", "1.0"))
 DEFAULT_SAMPLER = os.environ.get("QWEN_DEFAULT_SAMPLER", "euler_ancestral")
 DEFAULT_SCHEDULER = os.environ.get("QWEN_DEFAULT_SCHEDULER", "beta")
@@ -42,12 +42,13 @@ DEFAULT_PARSER_MODEL = os.environ.get("QWEN_DEFAULT_PARSER_MODEL", "atr").strip(
 DEFAULT_FILENAME_PREFIX = os.environ.get("QWEN_DEFAULT_FILENAME_PREFIX", "qwen-v19-clothing/output")
 DEFAULT_TARGET_WIDTH = int(os.environ.get("QWEN_DEFAULT_TARGET_WIDTH", "1024"))
 DEFAULT_TARGET_HEIGHT = int(os.environ.get("QWEN_DEFAULT_TARGET_HEIGHT", "1024"))
-DEFAULT_MASK_EXPAND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_EXPAND_PIXELS", "36"))
-DEFAULT_MASK_BLEND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_BLEND_PIXELS", "10"))
-DEFAULT_CONTEXT_EXPAND_FACTOR = float(os.environ.get("QWEN_DEFAULT_CONTEXT_EXPAND_FACTOR", "1.55"))
-DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "48"))
+DEFAULT_MASK_EXPAND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_EXPAND_PIXELS", "12"))
+DEFAULT_MASK_BLEND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_BLEND_PIXELS", "4"))
+DEFAULT_CONTEXT_EXPAND_FACTOR = float(os.environ.get("QWEN_DEFAULT_CONTEXT_EXPAND_FACTOR", "1.2"))
+DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "24"))
 DEFAULT_DEVICE_MODE = os.environ.get("QWEN_DEFAULT_DEVICE_MODE", "gpu").strip().lower()
 MASK_SCOPE_NAME = "person_silhouette_minus_head"
+AUTO_TARGET_LONG_SIDE = int(os.environ.get("QWEN_AUTO_TARGET_LONG_SIDE", "1536"))
 
 
 def comfy_url(path: str) -> str:
@@ -92,6 +93,11 @@ def normalize_image_bytes(raw_bytes: bytes) -> bytes:
         output = BytesIO()
         image.save(output, format="PNG")
         return output.getvalue()
+
+
+def image_size_from_bytes(raw_bytes: bytes) -> tuple[int, int]:
+    with Image.open(BytesIO(raw_bytes)) as image:
+        return image.size
 
 
 def load_source_image_bytes(job_input: dict[str, Any]) -> bytes:
@@ -232,6 +238,8 @@ def build_positive_prompt(edit_text: str) -> str:
         "Keep the head area unchanged, including face, hairline, hairstyle, expression, and head position.\n"
         "Keep pose, limb placement, camera framing, perspective, and body proportions as close to the source image as possible.\n"
         "If the source clothing is loose, infer hidden body proportions conservatively from visible cues without exaggeration.\n"
+        "Replace the visible outfit consistently across the whole masked region.\n"
+        "Do not leave fragments, scraps, seams, or patches of the original clothing unless the user explicitly asks for them.\n"
         "Keep all unmasked regions unchanged.\n"
         f"User request: {edit_text}"
     )
@@ -243,7 +251,8 @@ def build_negative_prompt(edit_pass: EditPass) -> str:
         "changed hairline, changed head position, changed head size, different pose, changed arm position, "
         "changed leg position, changed shoulder width, widened hips, enlarged chest, slimmed waist, "
         "longer legs, shorter torso, background change, lighting change, extra garments, extra limbs, "
-        "duplicate body parts, warped hands, missing hair, mask bleed, edits outside masked region"
+        "duplicate body parts, warped hands, missing hair, leftover original clothing, torn fabric scraps, "
+        "partial outfit change, inconsistent outfit coverage, mask bleed, edits outside masked region"
     )
     extras = ", ".join(edit_pass.category_negatives)
     if extras:
@@ -274,6 +283,31 @@ def parse_device_mode(job_input: dict[str, Any]) -> str:
     if requested not in {"gpu", "cpu"}:
         raise ValueError("device_mode must be either 'gpu' or 'cpu'.")
     return requested
+
+
+def snap_dimension(value: float, minimum: int = 640) -> int:
+    snapped = int(round(value / 64.0) * 64)
+    return max(minimum, snapped)
+
+
+def maybe_autosize_target(source_bytes: bytes, options: dict[str, Any]) -> None:
+    if options["target_width"] != DEFAULT_TARGET_WIDTH or options["target_height"] != DEFAULT_TARGET_HEIGHT:
+        return
+
+    source_width, source_height = image_size_from_bytes(source_bytes)
+    longest_side = max(source_width, source_height)
+    if longest_side <= 0:
+        return
+
+    aspect_ratio = source_width / source_height
+    if 0.8 <= aspect_ratio <= 1.25:
+        return
+
+    scale = AUTO_TARGET_LONG_SIDE / float(longest_side)
+    auto_width = snap_dimension(source_width * scale)
+    auto_height = snap_dimension(source_height * scale)
+    options["target_width"] = auto_width
+    options["target_height"] = auto_height
 
 
 def validate_input(job_input: dict[str, Any]) -> dict[str, Any]:
@@ -415,6 +449,7 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
 
         options = validate_input(job.get("input"))
         source_bytes = load_source_image_bytes(options["raw"])
+        maybe_autosize_target(source_bytes, options)
         passes = parse_instruction(options["instruction"], preferred_parser=options["parser_model"])
 
         client_id = str(uuid.uuid4())
