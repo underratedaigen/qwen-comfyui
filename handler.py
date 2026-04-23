@@ -37,7 +37,7 @@ DEFAULT_STEPS = int(os.environ.get("QWEN_DEFAULT_STEPS", "8"))
 DEFAULT_CFG = float(os.environ.get("QWEN_DEFAULT_CFG", "1.0"))
 DEFAULT_SAMPLER = os.environ.get("QWEN_DEFAULT_SAMPLER", "euler_ancestral")
 DEFAULT_SCHEDULER = os.environ.get("QWEN_DEFAULT_SCHEDULER", "beta")
-DEFAULT_DENOISE = float(os.environ.get("QWEN_DEFAULT_DENOISE", "1.0"))
+DEFAULT_DENOISE = float(os.environ.get("QWEN_DEFAULT_DENOISE", "0.82"))
 DEFAULT_PARSER_MODEL = os.environ.get("QWEN_DEFAULT_PARSER_MODEL", "atr").strip().lower()
 DEFAULT_FILENAME_PREFIX = os.environ.get("QWEN_DEFAULT_FILENAME_PREFIX", "qwen-v19-clothing/output")
 DEFAULT_TARGET_WIDTH = int(os.environ.get("QWEN_DEFAULT_TARGET_WIDTH", "1024"))
@@ -49,6 +49,8 @@ DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "24")
 DEFAULT_DEVICE_MODE = os.environ.get("QWEN_DEFAULT_DEVICE_MODE", "gpu").strip().lower()
 MASK_SCOPE_NAME = "person_silhouette_minus_head"
 AUTO_TARGET_LONG_SIDE = int(os.environ.get("QWEN_AUTO_TARGET_LONG_SIDE", "1536"))
+AUTO_DENOISE_WIDE = float(os.environ.get("QWEN_AUTO_DENOISE_WIDE", "0.78"))
+AUTO_DENOISE_STANDARD = float(os.environ.get("QWEN_AUTO_DENOISE_STANDARD", "0.82"))
 
 
 def comfy_url(path: str) -> str:
@@ -237,6 +239,8 @@ def build_positive_prompt(edit_text: str) -> str:
         "Regenerate only the masked region covering the person silhouette below the head.\n"
         "Keep the head area unchanged, including face, hairline, hairstyle, expression, and head position.\n"
         "Keep pose, limb placement, camera framing, perspective, and body proportions as close to the source image as possible.\n"
+        "Preserve the exact number of visible limbs and joints from the source image.\n"
+        "Do not create extra legs, extra feet, extra knees, extra arms, or extra hands.\n"
         "If the source clothing is loose, infer hidden body proportions conservatively from visible cues without exaggeration.\n"
         "Replace the visible outfit consistently across the whole masked region.\n"
         "Do not leave fragments, scraps, seams, or patches of the original clothing unless the user explicitly asks for them.\n"
@@ -251,8 +255,10 @@ def build_negative_prompt(edit_pass: EditPass) -> str:
         "changed hairline, changed head position, changed head size, different pose, changed arm position, "
         "changed leg position, changed shoulder width, widened hips, enlarged chest, slimmed waist, "
         "longer legs, shorter torso, background change, lighting change, extra garments, extra limbs, "
-        "duplicate body parts, warped hands, missing hair, leftover original clothing, torn fabric scraps, "
-        "partial outfit change, inconsistent outfit coverage, mask bleed, edits outside masked region"
+        "duplicate body parts, duplicate leg, duplicate foot, duplicate knee, duplicate ankle, duplicate arm, "
+        "extra leg, extra foot, extra knee, extra thigh, extra arm, extra hand, warped hands, missing hair, "
+        "leftover original clothing, torn fabric scraps, partial outfit change, inconsistent outfit coverage, "
+        "mask bleed, edits outside masked region"
     )
     extras = ", ".join(edit_pass.category_negatives)
     if extras:
@@ -308,6 +314,19 @@ def maybe_autosize_target(source_bytes: bytes, options: dict[str, Any]) -> None:
     auto_height = snap_dimension(source_height * scale)
     options["target_width"] = auto_width
     options["target_height"] = auto_height
+
+
+def maybe_autotune_denoise(source_bytes: bytes, options: dict[str, Any]) -> None:
+    if "denoise" in options["raw"]:
+        return
+
+    source_width, source_height = image_size_from_bytes(source_bytes)
+    if source_height <= 0:
+        return
+
+    aspect_ratio = source_width / source_height
+    target_denoise = AUTO_DENOISE_WIDE if (aspect_ratio < 0.8 or aspect_ratio > 1.25) else AUTO_DENOISE_STANDARD
+    options["denoise"] = min(float(options["denoise"]), float(target_denoise))
 
 
 def validate_input(job_input: dict[str, Any]) -> dict[str, Any]:
@@ -450,6 +469,7 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         options = validate_input(job.get("input"))
         source_bytes = load_source_image_bytes(options["raw"])
         maybe_autosize_target(source_bytes, options)
+        maybe_autotune_denoise(source_bytes, options)
         passes = parse_instruction(options["instruction"], preferred_parser=options["parser_model"])
 
         client_id = str(uuid.uuid4())
