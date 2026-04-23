@@ -1,3 +1,5 @@
+import os
+import shutil
 import torch
 import torch.nn as nn
 import torch.nn.functional as functional
@@ -7,7 +9,34 @@ try:
 except ImportError:
     from Queue import Queue
 
-from .functions import *
+def _toolchain_available() -> bool:
+    if shutil.which("c++") is None:
+        return False
+    if torch.cuda.is_available():
+        return shutil.which("nvcc") is not None or os.path.exists("/usr/local/cuda/bin/nvcc")
+    return True
+
+
+if _toolchain_available():
+    try:
+        from .functions import *  # noqa: F403
+        _HAS_INPLACE_ABN = True
+    except Exception:  # noqa: BLE001
+        ACT_RELU = "relu"
+        ACT_LEAKY_RELU = "leaky_relu"
+        ACT_ELU = "elu"
+        ACT_NONE = "none"
+        inplace_abn = None
+        inplace_abn_sync = None
+        _HAS_INPLACE_ABN = False
+else:
+    ACT_RELU = "relu"
+    ACT_LEAKY_RELU = "leaky_relu"
+    ACT_ELU = "elu"
+    ACT_NONE = "none"
+    inplace_abn = None
+    inplace_abn_sync = None
+    _HAS_INPLACE_ABN = False
 
 
 class ABN(nn.Module):
@@ -105,6 +134,8 @@ class InPlaceABN(ABN):
         super(InPlaceABN, self).__init__(num_features, eps, momentum, affine, activation, slope)
 
     def forward(self, x):
+        if not _HAS_INPLACE_ABN:
+            return super().forward(x)
         x, _, _ = inplace_abn(x, self.weight, self.bias, self.running_mean, self.running_var,
                            self.training, self.momentum, self.eps, self.activation, self.slope)
         return x
@@ -116,6 +147,8 @@ class InPlaceABNSync(ABN):
     """
 
     def forward(self, x):
+        if not _HAS_INPLACE_ABN:
+            return super().forward(x)
         x, _, _ =  inplace_abn_sync(x, self.weight, self.bias, self.running_mean, self.running_var,
                                    self.training, self.momentum, self.eps, self.activation, self.slope)
         return x

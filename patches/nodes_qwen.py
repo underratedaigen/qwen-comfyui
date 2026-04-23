@@ -1,10 +1,14 @@
 import math
 from typing import override
 
-import comfy.node_helpers as node_helpers
 import comfy.utils
 from comfy_api.internal import io
 from comfy_api.internal.extension import ComfyExtension
+
+try:
+    import comfy.node_helpers as node_helpers
+except ModuleNotFoundError:
+    import node_helpers
 
 
 class TextEncodeQwenImageEdit(io.ComfyNode):
