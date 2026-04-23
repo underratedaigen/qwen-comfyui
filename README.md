@@ -14,8 +14,8 @@ The endpoint is intentionally narrow:
 
 - `Qwen-Rapid-AIO-NSFW-v19.safetensors` as the main AIO checkpoint
 - Phr00t's patched `TextEncodeQwenImageEditPlus`
-- `human-parser-comfyui-node` for ATR and LIP garment masks
-- `ComfyUI-Inpaint-CropAndStitch` for garment-only inpainting
+- vendored `human-parser-comfyui-node` runtime files for ATR and LIP garment masks
+- vendored `ComfyUI-Inpaint-CropAndStitch` runtime files for garment-only inpainting
 - a custom RunPod handler so callers do not need to send raw ComfyUI workflow JSON
 
 ## API Shape
@@ -65,6 +65,19 @@ At worker startup, `bootstrap_models.py` will download:
 
 The parser weights now default to direct Hugging Face URLs instead of Google Drive so cold-start downloads are simpler on RunPod.
 
+## Build Shape
+
+This repo now vendors the two required ComfyUI custom nodes directly under `custom_nodes/` instead of cloning them during `docker build`.
+
+That makes the image build closer to the simpler WAN worker layout:
+
+- root-level `Dockerfile`
+- root-level startup script
+- root-level handler
+- vendored ComfyUI node code already present in the repository
+
+Pinned vendored sources are listed in `docs/vendored_dependencies.md`.
+
 ## Main Files
 
 - `Dockerfile`
@@ -73,6 +86,8 @@ The parser weights now default to direct Hugging Face URLs instead of Google Dri
 - `instruction_parser.py`
 - `workflow_builder.py`
 - `handler.py`
+- `custom_nodes/human-parser-comfyui-node`
+- `custom_nodes/ComfyUI-Inpaint-CropAndStitch`
 - `workflow_templates/clothing_edit_single_pass_atr.json`
 - `workflow_templates/clothing_edit_single_pass_lip.json`
 - `patches/nodes_qwen.py`
@@ -92,7 +107,19 @@ The remaining practical validation step is to run this against a live ComfyUI co
 
 ## Deployment Notes
 
-Recommended deployment path:
+Recommended deployment paths:
+
+- direct from GitHub repository
+- or GitHub Actions to `ghcr.io` as a fallback
+
+For GitHub repository deployment, use:
+
+- Build context: `.`
+- Dockerfile path: `Dockerfile`
+
+This repo now avoids cloning custom node repos during the Docker build, which keeps the GitHub build path more deterministic.
+
+Fallback path:
 
 - Build the image in GitHub Actions
 - Push it to `ghcr.io`

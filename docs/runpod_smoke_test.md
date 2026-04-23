@@ -1,10 +1,30 @@
 # RunPod Smoke Test
 
-Use this checklist with the GitHub Actions to GHCR workflow, then deploy the published image to RunPod from the container registry.
+Use this checklist for either:
 
-## Why This Path
+- direct RunPod deployment from the GitHub repository
+- or the GitHub Actions to GHCR fallback workflow
 
-The direct RunPod GitHub builder has been intermittently failing for some users at:
+## GitHub Repository Deploy
+
+This repo is now shaped to be friendlier to direct GitHub builds:
+
+- root-level `Dockerfile`
+- root-level build context
+- vendored custom nodes already in `custom_nodes/`
+- no `git clone` steps inside the Docker build for ComfyUI nodes
+
+Use:
+
+- Branch: `main`
+- Build context: `.`
+- Dockerfile path: `Dockerfile`
+
+If the builder still fails before Docker starts, use the GHCR fallback below.
+
+## Why Keep The GHCR Fallback
+
+The direct RunPod GitHub builder has still been intermittently failing for some users at:
 
 - `Successfully cloned repository ...`
 - `Creating cache directory.`

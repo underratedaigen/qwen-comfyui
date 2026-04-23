@@ -31,12 +31,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY requirements.txt /tmp/requirements.txt
 
-RUN uv pip install -r /tmp/requirements.txt \
-    && git clone https://github.com/cozymantis/human-parser-comfyui-node.git /comfyui/custom_nodes/human-parser-comfyui-node \
-    && git -C /comfyui/custom_nodes/human-parser-comfyui-node checkout 0ce414f7c939d36312f44bc2209f12f32fd663a8 \
-    && git clone https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git /comfyui/custom_nodes/ComfyUI-Inpaint-CropAndStitch \
-    && git -C /comfyui/custom_nodes/ComfyUI-Inpaint-CropAndStitch checkout 8e59ab12d6709616528279c85c0648ca8441684d
+RUN uv pip install -r /tmp/requirements.txt
 
+COPY custom_nodes /comfyui/custom_nodes
 COPY patches /patches
 COPY workflow_templates /workflow_templates
 COPY docs /docs
