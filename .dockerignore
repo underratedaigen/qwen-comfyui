@@ -1,0 +1,7 @@
+.git
+.env
+__pycache__/
+*.pyc
+.vendor-src/
+local_test_outputs/
+

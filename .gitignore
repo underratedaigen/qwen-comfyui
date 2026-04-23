@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+.vendor-src/
+local_test_outputs/
+models/
+input/
+output/
+temp/
