@@ -290,6 +290,9 @@
       ],
       "head_protect_grow_pixels": 4,
       "body_grow_pixels": 0,
+      "body_close_pixels": 24,
+      "row_fill_max_gap_pixels": 96,
+      "fill_holes": true,
       "threshold": 0.5
     },
     "class_type": "Qwen Body Mask From Background",

@@ -205,6 +205,9 @@ def build_workflow(
     if parser_type == "lip" and BODY_MASK_NODE_ID in workflow:
         workflow[BODY_MASK_NODE_ID]["inputs"]["head_protect_grow_pixels"] = 4
         workflow[BODY_MASK_NODE_ID]["inputs"]["body_grow_pixels"] = int(mask_expand_pixels)
+        workflow[BODY_MASK_NODE_ID]["inputs"]["body_close_pixels"] = 24
+        workflow[BODY_MASK_NODE_ID]["inputs"]["row_fill_max_gap_pixels"] = 96
+        workflow[BODY_MASK_NODE_ID]["inputs"]["fill_holes"] = True
 
     crop_inputs = workflow[CROP_NODE_ID]["inputs"]
     crop_inputs["mask_expand_pixels"] = 0 if mask_mode == "silhouette" and parser_type == "lip" else int(mask_expand_pixels)
