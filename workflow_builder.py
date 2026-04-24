@@ -21,6 +21,8 @@ KSAMPLER_NODE_ID = "10"
 VAE_DECODE_NODE_ID = "11"
 STITCH_NODE_ID = "12"
 SAVE_IMAGE_NODE_ID = "13"
+HEAD_PARSER_NODE_ID = "14"
+BODY_MASK_NODE_ID = "15"
 
 ATR_TEMPLATE_NAME = "clothing_edit_single_pass_atr.json"
 LIP_TEMPLATE_NAME = "clothing_edit_single_pass_lip.json"
@@ -103,6 +105,13 @@ LIP_SILHOUETTE_MINUS_HEAD_FIELDS = (
     "right_shoe",
 )
 
+LIP_HEAD_PROTECTION_FIELDS = (
+    "hat",
+    "hair",
+    "sunglasses",
+    "face",
+)
+
 
 def coerce_seed(seed: int | str | None) -> int:
     if seed is None:
@@ -180,7 +189,7 @@ def build_workflow(
 
     parser_inputs = workflow[PARSER_NODE_ID]["inputs"]
     if mask_mode == "silhouette":
-        selected_fields = set(_silhouette_minus_head_fields(parser_type))
+        selected_fields = {"background"} if parser_type == "lip" else set(_silhouette_minus_head_fields(parser_type))
     elif mask_mode == "target":
         selected_fields = {edit_pass.parser_field}
     else:
@@ -188,14 +197,27 @@ def build_workflow(
     for field_name in _boolean_fields_for_parser(parser_type):
         parser_inputs[field_name] = field_name in selected_fields
 
+    if parser_type == "lip" and HEAD_PARSER_NODE_ID in workflow:
+        head_parser_inputs = workflow[HEAD_PARSER_NODE_ID]["inputs"]
+        for field_name in _boolean_fields_for_parser(parser_type):
+            head_parser_inputs[field_name] = field_name in LIP_HEAD_PROTECTION_FIELDS
+
+    if parser_type == "lip" and BODY_MASK_NODE_ID in workflow:
+        workflow[BODY_MASK_NODE_ID]["inputs"]["head_protect_grow_pixels"] = 4
+        workflow[BODY_MASK_NODE_ID]["inputs"]["body_grow_pixels"] = int(mask_expand_pixels)
+
     crop_inputs = workflow[CROP_NODE_ID]["inputs"]
-    crop_inputs["mask_expand_pixels"] = int(mask_expand_pixels)
+    crop_inputs["mask_expand_pixels"] = 0 if mask_mode == "silhouette" and parser_type == "lip" else int(mask_expand_pixels)
     crop_inputs["mask_blend_pixels"] = int(mask_blend_pixels)
     crop_inputs["context_from_mask_extend_factor"] = float(context_expand_factor)
     crop_inputs["output_target_width"] = int(target_width)
     crop_inputs["output_target_height"] = int(target_height)
     crop_inputs["output_padding"] = str(int(output_padding))
     crop_inputs["device_mode"] = "gpu (much faster)" if device_mode == "gpu" else "cpu (compatible)"
+    if mask_mode == "silhouette" and parser_type == "lip" and BODY_MASK_NODE_ID in workflow:
+        crop_inputs["mask"] = [BODY_MASK_NODE_ID, 0]
+    else:
+        crop_inputs["mask"] = [PARSER_NODE_ID, 0]
 
     workflow[EMPTY_LATENT_NODE_ID]["inputs"]["width"] = int(target_width)
     workflow[EMPTY_LATENT_NODE_ID]["inputs"]["height"] = int(target_height)

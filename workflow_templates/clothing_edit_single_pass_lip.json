@@ -245,6 +245,56 @@
     "_meta": {
       "title": "Save Final Image"
     }
+  },
+  "14": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "background": false,
+      "hat": false,
+      "hair": true,
+      "glove": false,
+      "sunglasses": true,
+      "upper_clothes": false,
+      "dress": false,
+      "coat": false,
+      "socks": false,
+      "pants": false,
+      "jumpsuits": false,
+      "scarf": false,
+      "skirt": false,
+      "face": true,
+      "left_arm": false,
+      "right_arm": false,
+      "left_leg": false,
+      "right_leg": false,
+      "left_shoe": false,
+      "right_shoe": false
+    },
+    "class_type": "Cozy Human Parser LIP",
+    "_meta": {
+      "title": "LIP Head Protection Parser"
+    }
+  },
+  "15": {
+    "inputs": {
+      "background_mask": [
+        "3",
+        0
+      ],
+      "head_mask": [
+        "14",
+        0
+      ],
+      "head_protect_grow_pixels": 4,
+      "body_grow_pixels": 0,
+      "threshold": 0.5
+    },
+    "class_type": "Qwen Body Mask From Background",
+    "_meta": {
+      "title": "Strict Body Mask To Neck"
+    }
   }
 }
-
