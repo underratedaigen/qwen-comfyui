@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import replace
 from io import BytesIO
 import json
 import logging
@@ -37,17 +38,17 @@ DEFAULT_STEPS = int(os.environ.get("QWEN_DEFAULT_STEPS", "8"))
 DEFAULT_CFG = float(os.environ.get("QWEN_DEFAULT_CFG", "1.0"))
 DEFAULT_SAMPLER = os.environ.get("QWEN_DEFAULT_SAMPLER", "euler_ancestral")
 DEFAULT_SCHEDULER = os.environ.get("QWEN_DEFAULT_SCHEDULER", "beta")
-DEFAULT_DENOISE = float(os.environ.get("QWEN_DEFAULT_DENOISE", "0.82"))
-DEFAULT_PARSER_MODEL = os.environ.get("QWEN_DEFAULT_PARSER_MODEL", "atr").strip().lower()
+DEFAULT_DENOISE = float(os.environ.get("QWEN_DEFAULT_DENOISE", "0.84"))
+DEFAULT_PARSER_MODEL = os.environ.get("QWEN_DEFAULT_PARSER_MODEL", "lip").strip().lower()
 DEFAULT_FILENAME_PREFIX = os.environ.get("QWEN_DEFAULT_FILENAME_PREFIX", "qwen-v19-clothing/output")
 DEFAULT_TARGET_WIDTH = int(os.environ.get("QWEN_DEFAULT_TARGET_WIDTH", "1024"))
 DEFAULT_TARGET_HEIGHT = int(os.environ.get("QWEN_DEFAULT_TARGET_HEIGHT", "1024"))
-DEFAULT_MASK_EXPAND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_EXPAND_PIXELS", "12"))
-DEFAULT_MASK_BLEND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_BLEND_PIXELS", "4"))
-DEFAULT_CONTEXT_EXPAND_FACTOR = float(os.environ.get("QWEN_DEFAULT_CONTEXT_EXPAND_FACTOR", "1.2"))
+DEFAULT_MASK_EXPAND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_EXPAND_PIXELS", "0"))
+DEFAULT_MASK_BLEND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_BLEND_PIXELS", "2"))
+DEFAULT_CONTEXT_EXPAND_FACTOR = float(os.environ.get("QWEN_DEFAULT_CONTEXT_EXPAND_FACTOR", "1.15"))
 DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "32"))
 DEFAULT_DEVICE_MODE = os.environ.get("QWEN_DEFAULT_DEVICE_MODE", "gpu").strip().lower()
-MASK_SCOPE_NAME = "person_silhouette_minus_head"
+MASK_SCOPE_NAME = "body_silhouette_to_neck"
 AUTO_TARGET_LONG_SIDE = int(os.environ.get("QWEN_AUTO_TARGET_LONG_SIDE", "1536"))
 AUTO_DENOISE_WIDE = float(os.environ.get("QWEN_AUTO_DENOISE_WIDE", "0.78"))
 AUTO_DENOISE_STANDARD = float(os.environ.get("QWEN_AUTO_DENOISE_STANDARD", "0.82"))
@@ -239,16 +240,16 @@ def extract_output_images(prompt_history: dict[str, Any]) -> list[dict[str, Any]
 
 def build_positive_prompt(edit_pass: EditPass) -> str:
     return (
-        "Regenerate only the masked region covering the person silhouette below the head.\n"
-        "Keep the head area unchanged, including face, hairline, hairstyle, expression, and head position.\n"
+        "Regenerate only inside the strict body silhouette mask, from the neck down.\n"
+        "The mask must stop at the neck: do not edit the face, head, hairline, eyes, mouth, or expression.\n"
+        "Replace all visible old clothing inside the mask, including clothing near hair, shoulders, neck, arms, waist, hips, and legs.\n"
         "Keep pose, limb placement, camera framing, perspective, and body proportions as close to the source image as possible.\n"
         "Preserve the exact number of visible limbs and joints from the source image.\n"
         "Do not create extra legs, extra feet, extra knees, extra arms, or extra hands.\n"
         "If the source clothing is loose, infer hidden body proportions conservatively from visible cues without exaggeration.\n"
-        "Replace the visible outfit consistently across the whole masked region.\n"
-        "Do not leave fragments, scraps, seams, or patches of the original clothing unless the user explicitly asks for them.\n"
+        "Apply the user's clothing request consistently across the whole masked body region.\n"
+        "Do not leave fragments, scraps, seams, patches, or denim pieces of the original clothing unless the user explicitly asks for them.\n"
         "Keep all unmasked regions unchanged.\n"
-        f"Primary garment focus for this pass: {edit_pass.category}.\n"
         f"User request: {edit_pass.edit_text}"
     )
 
@@ -356,8 +357,21 @@ def maybe_autotune_denoise(source_bytes: bytes, options: dict[str, Any]) -> None
     options["denoise"] = min(float(options["denoise"]), float(target_denoise))
 
 
+def force_lip_for_body_mask(passes: list[EditPass]) -> list[EditPass]:
+    coerced: list[EditPass] = []
+    for edit_pass in passes:
+        if edit_pass.parser_type == "lip":
+            coerced.append(edit_pass)
+            continue
+        if "lip" in edit_pass.supported_parsers:
+            coerced.append(replace(edit_pass, parser_type="lip"))
+            continue
+        coerced.append(edit_pass)
+    return coerced
+
+
 def should_run_target_refinement(edit_pass: EditPass) -> bool:
-    return edit_pass.category != "Outfit"
+    return False
 
 
 def refinement_denoise(options: dict[str, Any]) -> float:
@@ -518,7 +532,9 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         source_bytes = load_source_image_bytes(options["raw"])
         maybe_autosize_target(source_bytes, options)
         maybe_autotune_denoise(source_bytes, options)
-        passes = parse_instruction(options["instruction"], preferred_parser=options["parser_model"])
+        passes = force_lip_for_body_mask(
+            parse_instruction(options["instruction"], preferred_parser=options["parser_model"])
+        )
 
         client_id = str(uuid.uuid4())
         current_bytes = source_bytes

@@ -141,6 +141,12 @@ def _silhouette_minus_head_fields(parser_type: str) -> tuple[str, ...]:
     raise ValueError(f"Unsupported parser_type '{parser_type}'")
 
 
+def _workflow_parser_type(edit_pass: EditPass, mask_mode: str) -> str:
+    if mask_mode == "silhouette" and "lip" in edit_pass.supported_parsers:
+        return "lip"
+    return edit_pass.parser_type
+
+
 def build_workflow(
     *,
     template_dir: Path,
@@ -165,7 +171,8 @@ def build_workflow(
     device_mode: str,
     filename_prefix: str,
 ) -> dict:
-    template_path = template_dir / template_name_for_parser(edit_pass.parser_type)
+    parser_type = _workflow_parser_type(edit_pass, mask_mode)
+    template_path = template_dir / template_name_for_parser(parser_type)
     workflow = deepcopy(load_template(template_path))
 
     workflow[LOAD_IMAGE_NODE_ID]["inputs"]["image"] = input_image_name
@@ -173,12 +180,12 @@ def build_workflow(
 
     parser_inputs = workflow[PARSER_NODE_ID]["inputs"]
     if mask_mode == "silhouette":
-        selected_fields = set(_silhouette_minus_head_fields(edit_pass.parser_type))
+        selected_fields = set(_silhouette_minus_head_fields(parser_type))
     elif mask_mode == "target":
         selected_fields = {edit_pass.parser_field}
     else:
         raise ValueError(f"Unsupported mask_mode '{mask_mode}'")
-    for field_name in _boolean_fields_for_parser(edit_pass.parser_type):
+    for field_name in _boolean_fields_for_parser(parser_type):
         parser_inputs[field_name] = field_name in selected_fields
 
     crop_inputs = workflow[CROP_NODE_ID]["inputs"]

@@ -194,8 +194,8 @@ INDEX_HTML = """<!doctype html>
           </label>
           <label>Parser Model
             <select name="parser_model">
-              <option value="atr" selected>ATR</option>
-              <option value="lip">LIP</option>
+              <option value="lip" selected>LIP</option>
+              <option value="atr">ATR</option>
             </select>
           </label>
           <label>Seed
@@ -223,13 +223,13 @@ INDEX_HTML = """<!doctype html>
             <input name="target_height" type="number" min="256" step="64" value="1024">
           </label>
           <label>Mask Expand Pixels
-            <input name="mask_expand_pixels" type="number" min="0" value="12">
+            <input name="mask_expand_pixels" type="number" min="0" value="0">
           </label>
           <label>Mask Blend Pixels
-            <input name="mask_blend_pixels" type="number" min="0" value="4">
+            <input name="mask_blend_pixels" type="number" min="0" value="2">
           </label>
           <label>Context Expand Factor
-            <input name="context_expand_factor" type="number" min="1.0" step="0.05" value="1.2">
+            <input name="context_expand_factor" type="number" min="1.0" step="0.05" value="1.15">
           </label>
           <label>Output Padding
             <select name="output_padding">
@@ -749,7 +749,7 @@ class QwenTesterHandler(BaseHTTPRequestHandler):
 
             form_data = {
                 "instruction": instruction,
-                "parser_model": str(payload.get("parser_model", "atr")),
+                "parser_model": str(payload.get("parser_model", "lip")),
                 "seed": str(payload.get("seed", "42")),
                 "steps": str(payload.get("steps", "8")),
                 "cfg": str(payload.get("cfg", "1.0")),
@@ -758,9 +758,9 @@ class QwenTesterHandler(BaseHTTPRequestHandler):
                 "scheduler": str(payload.get("scheduler", "beta")),
                 "target_width": str(payload.get("target_width", "1024")),
                 "target_height": str(payload.get("target_height", "1024")),
-                "mask_expand_pixels": str(payload.get("mask_expand_pixels", "12")),
-                "mask_blend_pixels": str(payload.get("mask_blend_pixels", "4")),
-                "context_expand_factor": str(payload.get("context_expand_factor", "1.2")),
+                "mask_expand_pixels": str(payload.get("mask_expand_pixels", "0")),
+                "mask_blend_pixels": str(payload.get("mask_blend_pixels", "2")),
+                "context_expand_factor": str(payload.get("context_expand_factor", "1.15")),
                 "output_padding": str(payload.get("output_padding", "32")),
                 "device_mode": str(payload.get("device_mode", "gpu")),
                 "checkpoint_name": str(payload.get("checkpoint_name", "")),

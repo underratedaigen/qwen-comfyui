@@ -257,8 +257,8 @@ def build_generic_outfit_pass(instruction: str, preferred_parser: str) -> EditPa
     return EditPass(
         category="Outfit",
         parser_field="upper_clothes",
-        parser_type=preferred_parser,
-        supported_parsers=(preferred_parser,),
+        parser_type="lip",
+        supported_parsers=("lip",),
         edit_text=instruction,
         category_negatives=(),
     )
