@@ -45,7 +45,7 @@ DEFAULT_TARGET_HEIGHT = int(os.environ.get("QWEN_DEFAULT_TARGET_HEIGHT", "1024")
 DEFAULT_MASK_EXPAND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_EXPAND_PIXELS", "12"))
 DEFAULT_MASK_BLEND_PIXELS = int(os.environ.get("QWEN_DEFAULT_MASK_BLEND_PIXELS", "4"))
 DEFAULT_CONTEXT_EXPAND_FACTOR = float(os.environ.get("QWEN_DEFAULT_CONTEXT_EXPAND_FACTOR", "1.2"))
-DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "24"))
+DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "32"))
 DEFAULT_DEVICE_MODE = os.environ.get("QWEN_DEFAULT_DEVICE_MODE", "gpu").strip().lower()
 MASK_SCOPE_NAME = "person_silhouette_minus_head"
 AUTO_TARGET_LONG_SIDE = int(os.environ.get("QWEN_AUTO_TARGET_LONG_SIDE", "1536"))
@@ -53,6 +53,7 @@ AUTO_DENOISE_WIDE = float(os.environ.get("QWEN_AUTO_DENOISE_WIDE", "0.78"))
 AUTO_DENOISE_STANDARD = float(os.environ.get("QWEN_AUTO_DENOISE_STANDARD", "0.82"))
 TARGET_REFINE_DENOISE = float(os.environ.get("QWEN_TARGET_REFINE_DENOISE", "0.9"))
 TARGET_REFINE_STEPS_BONUS = int(os.environ.get("QWEN_TARGET_REFINE_STEPS_BONUS", "2"))
+VALID_OUTPUT_PADDING_VALUES = (0, 8, 16, 32, 64, 128, 256, 512)
 
 
 def comfy_url(path: str) -> str:
@@ -317,6 +318,11 @@ def snap_dimension(value: float, minimum: int = 640) -> int:
     return max(minimum, snapped)
 
 
+def snap_output_padding(value: int | str) -> int:
+    requested = int(value)
+    return min(VALID_OUTPUT_PADDING_VALUES, key=lambda candidate: abs(candidate - requested))
+
+
 def maybe_autosize_target(source_bytes: bytes, options: dict[str, Any]) -> None:
     if options["target_width"] != DEFAULT_TARGET_WIDTH or options["target_height"] != DEFAULT_TARGET_HEIGHT:
         return
@@ -388,7 +394,7 @@ def validate_input(job_input: dict[str, Any]) -> dict[str, Any]:
     mask_expand_pixels = int(job_input.get("mask_expand_pixels", DEFAULT_MASK_EXPAND_PIXELS))
     mask_blend_pixels = int(job_input.get("mask_blend_pixels", DEFAULT_MASK_BLEND_PIXELS))
     context_expand_factor = float(job_input.get("context_expand_factor", DEFAULT_CONTEXT_EXPAND_FACTOR))
-    output_padding = int(job_input.get("output_padding", DEFAULT_OUTPUT_PADDING))
+    output_padding = snap_output_padding(job_input.get("output_padding", DEFAULT_OUTPUT_PADDING))
     checkpoint_name = str(job_input.get("checkpoint_name", QWEN_CHECKPOINT_NAME)).strip()
 
     if steps < 1:
