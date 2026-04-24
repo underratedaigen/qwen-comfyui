@@ -52,6 +52,7 @@ MASK_SCOPE_NAME = "body_silhouette_to_neck"
 AUTO_TARGET_LONG_SIDE = int(os.environ.get("QWEN_AUTO_TARGET_LONG_SIDE", "1536"))
 AUTO_DENOISE_WIDE = float(os.environ.get("QWEN_AUTO_DENOISE_WIDE", "0.78"))
 AUTO_DENOISE_STANDARD = float(os.environ.get("QWEN_AUTO_DENOISE_STANDARD", "0.82"))
+LEG_REVEAL_DENOISE = float(os.environ.get("QWEN_LEG_REVEAL_DENOISE", "0.9"))
 TARGET_REFINE_DENOISE = float(os.environ.get("QWEN_TARGET_REFINE_DENOISE", "0.9"))
 TARGET_REFINE_STEPS_BONUS = int(os.environ.get("QWEN_TARGET_REFINE_STEPS_BONUS", "2"))
 DEFAULT_HAIR_CLEANUP = os.environ.get("QWEN_DEFAULT_HAIR_CLEANUP", "true").strip().lower() in {
@@ -63,6 +64,20 @@ DEFAULT_HAIR_CLEANUP = os.environ.get("QWEN_DEFAULT_HAIR_CLEANUP", "true").strip
 DEFAULT_HAIR_CLEANUP_DENOISE = float(os.environ.get("QWEN_DEFAULT_HAIR_CLEANUP_DENOISE", "0.62"))
 DEFAULT_HAIR_CLEANUP_STEPS = int(os.environ.get("QWEN_DEFAULT_HAIR_CLEANUP_STEPS", "6"))
 VALID_OUTPUT_PADDING_VALUES = (0, 8, 16, 32, 64, 128, 256, 512)
+LEG_REVEAL_KEYWORDS = (
+    "shorts",
+    "short short",
+    "mini skirt",
+    "miniskirt",
+    "micro skirt",
+    "bodysuit",
+    "swimsuit",
+    "bikini",
+    "leotard",
+    "romper",
+    "remove dress",
+    "remove skirt",
+)
 
 
 def comfy_url(path: str) -> str:
@@ -246,8 +261,13 @@ def extract_output_images(prompt_history: dict[str, Any]) -> list[dict[str, Any]
     return []
 
 
+def is_leg_reveal_edit(text: str) -> bool:
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in LEG_REVEAL_KEYWORDS)
+
+
 def build_positive_prompt(edit_pass: EditPass) -> str:
-    return (
+    prompt = (
         "Regenerate only inside the strict body silhouette mask, from the neck down.\n"
         "The mask must stop at the neck: do not edit the face, head, hairline, eyes, mouth, or expression.\n"
         "Replace all visible old clothing inside the mask, including clothing near hair, shoulders, neck, arms, waist, hips, and legs.\n"
@@ -258,8 +278,14 @@ def build_positive_prompt(edit_pass: EditPass) -> str:
         "Apply the user's clothing request consistently across the whole masked body region.\n"
         "Do not leave fragments, scraps, seams, patches, or denim pieces of the original clothing unless the user explicitly asks for them.\n"
         "Keep all unmasked regions unchanged.\n"
-        f"User request: {edit_pass.edit_text}"
     )
+    if is_leg_reveal_edit(edit_pass.edit_text):
+        prompt += (
+            "This request reveals the legs. Preserve visible feet, shoes, ankles, calves, knees, and leg pose from the source.\n"
+            "Where the old dress or skirt hid the upper legs, synthesize continuous natural legs connecting the hips to the visible lower legs.\n"
+            "Do not erase legs, fade legs into the background, hide legs behind invisible fabric, or cut off the legs.\n"
+        )
+    return f"{prompt}User request: {edit_pass.edit_text}"
 
 
 def build_target_refine_positive_prompt(edit_pass: EditPass) -> str:
@@ -316,11 +342,15 @@ def build_negative_prompt(edit_pass: EditPass) -> str:
         "changed leg position, changed shoulder width, widened hips, enlarged chest, slimmed waist, "
         "longer legs, shorter torso, background change, lighting change, extra garments, extra limbs, "
         "duplicate body parts, duplicate leg, duplicate foot, duplicate knee, duplicate ankle, duplicate arm, "
-        "extra leg, extra foot, extra knee, extra thigh, extra arm, extra hand, warped hands, missing hair, "
+        "extra leg, extra foot, extra knee, extra thigh, extra arm, extra hand, missing leg, missing legs, "
+        "invisible leg, invisible legs, erased legs, cut off legs, floating feet, disconnected feet, warped hands, missing hair, "
         "leftover original clothing, torn fabric scraps, partial outfit change, inconsistent outfit coverage, "
         "mask bleed, edits outside masked region"
     )
-    extras = ", ".join(edit_pass.category_negatives)
+    category_negatives = list(edit_pass.category_negatives)
+    if is_leg_reveal_edit(edit_pass.edit_text):
+        category_negatives = [negative for negative in category_negatives if negative != "legs changed"]
+    extras = ", ".join(category_negatives)
     if extras:
         return f"{base}, {extras}"
     return base
@@ -392,6 +422,13 @@ def maybe_autotune_denoise(source_bytes: bytes, options: dict[str, Any]) -> None
     aspect_ratio = source_width / source_height
     target_denoise = AUTO_DENOISE_WIDE if (aspect_ratio < 0.8 or aspect_ratio > 1.25) else AUTO_DENOISE_STANDARD
     options["denoise"] = min(float(options["denoise"]), float(target_denoise))
+
+
+def maybe_tune_leg_reveal_denoise(passes: list[EditPass], options: dict[str, Any]) -> None:
+    if "denoise" in options["raw"]:
+        return
+    if any(is_leg_reveal_edit(edit_pass.edit_text) for edit_pass in passes):
+        options["denoise"] = max(float(options["denoise"]), float(LEG_REVEAL_DENOISE))
 
 
 def force_lip_for_body_mask(passes: list[EditPass]) -> list[EditPass]:
@@ -582,6 +619,7 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         passes = force_lip_for_body_mask(
             parse_instruction(options["instruction"], preferred_parser=options["parser_model"])
         )
+        maybe_tune_leg_reveal_denoise(passes, options)
 
         client_id = str(uuid.uuid4())
         current_bytes = source_bytes

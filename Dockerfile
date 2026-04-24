@@ -21,6 +21,7 @@ ENV PYTHONUNBUFFERED=1 \
     QWEN_DEFAULT_HAIR_CLEANUP=true \
     QWEN_DEFAULT_HAIR_CLEANUP_DENOISE=0.62 \
     QWEN_DEFAULT_HAIR_CLEANUP_STEPS=6 \
+    QWEN_LEG_REVEAL_DENOISE=0.9 \
     QWEN_SKIP_MODEL_DOWNLOAD=false \
     QWEN_SKIP_PARSER_DOWNLOAD=false \
     SCHP_ATR_MODEL_URL=https://huggingface.co/panyanyany/Self-Correction-Human-Parsing/resolve/main/schp/exp-schp-201908301523-atr.pth \
