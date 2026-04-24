@@ -54,6 +54,14 @@ AUTO_DENOISE_WIDE = float(os.environ.get("QWEN_AUTO_DENOISE_WIDE", "0.78"))
 AUTO_DENOISE_STANDARD = float(os.environ.get("QWEN_AUTO_DENOISE_STANDARD", "0.82"))
 TARGET_REFINE_DENOISE = float(os.environ.get("QWEN_TARGET_REFINE_DENOISE", "0.9"))
 TARGET_REFINE_STEPS_BONUS = int(os.environ.get("QWEN_TARGET_REFINE_STEPS_BONUS", "2"))
+DEFAULT_HAIR_CLEANUP = os.environ.get("QWEN_DEFAULT_HAIR_CLEANUP", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DEFAULT_HAIR_CLEANUP_DENOISE = float(os.environ.get("QWEN_DEFAULT_HAIR_CLEANUP_DENOISE", "0.62"))
+DEFAULT_HAIR_CLEANUP_STEPS = int(os.environ.get("QWEN_DEFAULT_HAIR_CLEANUP_STEPS", "6"))
 VALID_OUTPUT_PADDING_VALUES = (0, 8, 16, 32, 64, 128, 256, 512)
 
 
@@ -272,6 +280,35 @@ def build_target_refine_positive_prompt(edit_pass: EditPass) -> str:
     return "\n".join(focus_lines)
 
 
+def build_hair_cleanup_pass(instruction: str) -> EditPass:
+    return EditPass(
+        category="Hair Cleanup",
+        parser_field="hair",
+        parser_type="lip",
+        supported_parsers=("lip",),
+        edit_text=instruction,
+        category_negatives=(),
+    )
+
+
+def build_hair_cleanup_positive_prompt(instruction: str) -> str:
+    return (
+        "Refine only the masked hair region.\n"
+        "Remove any clothing, denim, fabric, blue garment, collar, or jacket fragments visible inside the hair.\n"
+        "Restore continuous natural hair strands matching the source hair color, flow, length, and texture.\n"
+        "Keep face, eyes, mouth, skin, neck, shoulders, body, outfit, background, lighting, and camera framing unchanged.\n"
+        f"Original user request: {instruction}"
+    )
+
+
+def build_hair_cleanup_negative_prompt() -> str:
+    return (
+        "clothing in hair, denim in hair, fabric scraps, blue fabric, jacket fragments, collar fragments, "
+        "changed face, changed expression, changed hairstyle, shorter hair, missing hair, blurred hair, "
+        "changed skin, changed neck, changed shoulder, changed outfit, background change"
+    )
+
+
 def build_negative_prompt(edit_pass: EditPass) -> str:
     base = (
         "change face, change identity, different person, different hairstyle, different expression, "
@@ -410,6 +447,9 @@ def validate_input(job_input: dict[str, Any]) -> dict[str, Any]:
     context_expand_factor = float(job_input.get("context_expand_factor", DEFAULT_CONTEXT_EXPAND_FACTOR))
     output_padding = snap_output_padding(job_input.get("output_padding", DEFAULT_OUTPUT_PADDING))
     checkpoint_name = str(job_input.get("checkpoint_name", QWEN_CHECKPOINT_NAME)).strip()
+    hair_cleanup = parse_bool(job_input.get("hair_cleanup"), DEFAULT_HAIR_CLEANUP)
+    hair_cleanup_denoise = float(job_input.get("hair_cleanup_denoise", DEFAULT_HAIR_CLEANUP_DENOISE))
+    hair_cleanup_steps = int(job_input.get("hair_cleanup_steps", DEFAULT_HAIR_CLEANUP_STEPS))
 
     if steps < 1:
         raise ValueError("steps must be >= 1.")
@@ -417,6 +457,10 @@ def validate_input(job_input: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("cfg must be > 0.")
     if denoise <= 0:
         raise ValueError("denoise must be > 0.")
+    if hair_cleanup_denoise <= 0:
+        raise ValueError("hair_cleanup_denoise must be > 0.")
+    if hair_cleanup_steps < 1:
+        raise ValueError("hair_cleanup_steps must be >= 1.")
 
     return {
         "raw": job_input,
@@ -436,6 +480,9 @@ def validate_input(job_input: dict[str, Any]) -> dict[str, Any]:
         "output_padding": output_padding,
         "device_mode": parse_device_mode(job_input),
         "checkpoint_name": checkpoint_name,
+        "hair_cleanup": hair_cleanup,
+        "hair_cleanup_denoise": hair_cleanup_denoise,
+        "hair_cleanup_steps": hair_cleanup_steps,
     }
 
 
@@ -513,7 +560,7 @@ def execute_pass(
         "category": edit_pass.category,
         "parser_field": edit_pass.parser_field,
         "parser_type": edit_pass.parser_type,
-        "mask_scope": MASK_SCOPE_NAME,
+        "mask_scope": "hair_cleanup" if stage_name == "hair-cleanup" else MASK_SCOPE_NAME,
         "mask_mode": mask_mode,
         "stage_name": stage_name,
         "edit_text": edit_pass.edit_text,
@@ -574,6 +621,24 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
                     steps=refinement_steps(options),
                 )
                 pass_results.append(metadata)
+
+        if options["hair_cleanup"]:
+            cleanup_pass = build_hair_cleanup_pass(options["instruction"])
+            current_bytes, metadata = execute_pass(
+                job_id=job_id,
+                client_id=client_id,
+                pass_index=len(passes) + 1,
+                stage_name="hair-cleanup",
+                current_image_bytes=current_bytes,
+                edit_pass=cleanup_pass,
+                options=options,
+                mask_mode="target",
+                positive_prompt=build_hair_cleanup_positive_prompt(options["instruction"]),
+                negative_prompt=build_hair_cleanup_negative_prompt(),
+                denoise=options["hair_cleanup_denoise"],
+                steps=options["hair_cleanup_steps"],
+            )
+            pass_results.append(metadata)
 
         final_filename = f"{job_id}_final.png"
         artifact = encode_output_artifact(job_id, final_filename, current_bytes)

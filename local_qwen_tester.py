@@ -210,6 +210,15 @@ INDEX_HTML = """<!doctype html>
           <label>Denoise
             <input name="denoise" type="number" min="0.1" max="1" step="0.01" placeholder="auto">
           </label>
+          <label>Hair Cleanup
+            <select name="hair_cleanup">
+              <option value="true" selected>On</option>
+              <option value="false">Off</option>
+            </select>
+          </label>
+          <label>Hair Cleanup Denoise
+            <input name="hair_cleanup_denoise" type="number" min="0.1" max="1" step="0.01" value="0.62">
+          </label>
           <label>Sampler
             <input name="sampler_name" value="euler_ancestral">
           </label>
@@ -469,6 +478,8 @@ def _build_runpod_input(form_data: dict[str, str], image_base64: str) -> dict:
         "context_expand_factor": float(form_data["context_expand_factor"]),
         "output_padding": int(form_data["output_padding"]),
         "device_mode": form_data["device_mode"],
+        "hair_cleanup": form_data["hair_cleanup"],
+        "hair_cleanup_denoise": float(form_data["hair_cleanup_denoise"]),
     }
 
     if form_data.get("denoise", "").strip():
@@ -754,6 +765,8 @@ class QwenTesterHandler(BaseHTTPRequestHandler):
                 "steps": str(payload.get("steps", "8")),
                 "cfg": str(payload.get("cfg", "1.0")),
                 "denoise": str(payload.get("denoise", "")),
+                "hair_cleanup": str(payload.get("hair_cleanup", "true")),
+                "hair_cleanup_denoise": str(payload.get("hair_cleanup_denoise", "0.62")),
                 "sampler_name": str(payload.get("sampler_name", "euler_ancestral")),
                 "scheduler": str(payload.get("scheduler", "beta")),
                 "target_width": str(payload.get("target_width", "1024")),
