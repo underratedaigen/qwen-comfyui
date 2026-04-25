@@ -49,7 +49,8 @@ DEFAULT_CONTEXT_EXPAND_FACTOR = float(os.environ.get("QWEN_DEFAULT_CONTEXT_EXPAN
 DEFAULT_OUTPUT_PADDING = int(os.environ.get("QWEN_DEFAULT_OUTPUT_PADDING", "32"))
 DEFAULT_DEVICE_MODE = os.environ.get("QWEN_DEFAULT_DEVICE_MODE", "gpu").strip().lower()
 MASK_SCOPE_NAME = "body_silhouette_to_neck"
-AUTO_TARGET_LONG_SIDE = int(os.environ.get("QWEN_AUTO_TARGET_LONG_SIDE", "1536"))
+MAX_INPUT_LONG_SIDE = int(os.environ.get("QWEN_MAX_INPUT_LONG_SIDE", "1080"))
+AUTO_TARGET_LONG_SIDE = int(os.environ.get("QWEN_AUTO_TARGET_LONG_SIDE", str(MAX_INPUT_LONG_SIDE)))
 AUTO_DENOISE_WIDE = float(os.environ.get("QWEN_AUTO_DENOISE_WIDE", "0.78"))
 AUTO_DENOISE_STANDARD = float(os.environ.get("QWEN_AUTO_DENOISE_STANDARD", "0.82"))
 LEG_REVEAL_DENOISE = float(os.environ.get("QWEN_LEG_REVEAL_DENOISE", "0.9"))
@@ -122,6 +123,40 @@ def normalize_image_bytes(raw_bytes: bytes) -> bytes:
         output = BytesIO()
         image.save(output, format="PNG")
         return output.getvalue()
+
+
+def resize_image_bytes_to_long_side(raw_bytes: bytes, max_long_side: int) -> tuple[bytes, dict[str, int | bool]]:
+    with Image.open(BytesIO(raw_bytes)) as image:
+        if image.mode not in {"RGB", "RGBA"}:
+            image = image.convert("RGB")
+
+        original_width, original_height = image.size
+        original_long_side = max(original_width, original_height)
+        if max_long_side <= 0 or original_long_side <= max_long_side:
+            output = BytesIO()
+            image.save(output, format="PNG")
+            return output.getvalue(), {
+                "resized": False,
+                "original_width": original_width,
+                "original_height": original_height,
+                "width": original_width,
+                "height": original_height,
+            }
+
+        scale = max_long_side / float(original_long_side)
+        resized_width = max(1, int(round(original_width * scale)))
+        resized_height = max(1, int(round(original_height * scale)))
+        resized = image.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+
+        output = BytesIO()
+        resized.save(output, format="PNG")
+        return output.getvalue(), {
+            "resized": True,
+            "original_width": original_width,
+            "original_height": original_height,
+            "width": resized_width,
+            "height": resized_height,
+        }
 
 
 def image_size_from_bytes(raw_bytes: bytes) -> tuple[int, int]:
@@ -386,13 +421,31 @@ def snap_dimension(value: float, minimum: int = 640) -> int:
     return max(minimum, snapped)
 
 
+def snap_dimension_down(value: float, minimum: int = 512) -> int:
+    snapped = int(value // 64) * 64
+    return max(minimum, snapped)
+
+
 def snap_output_padding(value: int | str) -> int:
     requested = int(value)
     return min(VALID_OUTPUT_PADDING_VALUES, key=lambda candidate: abs(candidate - requested))
 
 
+def cap_target_to_long_side(options: dict[str, Any], max_long_side: int) -> None:
+    target_width = int(options["target_width"])
+    target_height = int(options["target_height"])
+    target_long_side = max(target_width, target_height)
+    if max_long_side <= 0 or target_long_side <= max_long_side:
+        return
+
+    scale = max_long_side / float(target_long_side)
+    options["target_width"] = snap_dimension_down(target_width * scale)
+    options["target_height"] = snap_dimension_down(target_height * scale)
+
+
 def maybe_autosize_target(source_bytes: bytes, options: dict[str, Any]) -> None:
     if options["target_width"] != DEFAULT_TARGET_WIDTH or options["target_height"] != DEFAULT_TARGET_HEIGHT:
+        cap_target_to_long_side(options, MAX_INPUT_LONG_SIDE)
         return
 
     source_width, source_height = image_size_from_bytes(source_bytes)
@@ -402,13 +455,15 @@ def maybe_autosize_target(source_bytes: bytes, options: dict[str, Any]) -> None:
 
     aspect_ratio = source_width / source_height
     if 0.8 <= aspect_ratio <= 1.25:
+        cap_target_to_long_side(options, MAX_INPUT_LONG_SIDE)
         return
 
     scale = AUTO_TARGET_LONG_SIDE / float(longest_side)
-    auto_width = snap_dimension(source_width * scale)
-    auto_height = snap_dimension(source_height * scale)
+    auto_width = snap_dimension_down(source_width * scale)
+    auto_height = snap_dimension_down(source_height * scale)
     options["target_width"] = auto_width
     options["target_height"] = auto_height
+    cap_target_to_long_side(options, MAX_INPUT_LONG_SIDE)
 
 
 def maybe_autotune_denoise(source_bytes: bytes, options: dict[str, Any]) -> None:
@@ -614,6 +669,7 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
 
         options = validate_input(job.get("input"))
         source_bytes = load_source_image_bytes(options["raw"])
+        source_bytes, resize_metadata = resize_image_bytes_to_long_side(source_bytes, MAX_INPUT_LONG_SIDE)
         maybe_autosize_target(source_bytes, options)
         maybe_autotune_denoise(source_bytes, options)
         passes = force_lip_for_body_mask(
@@ -683,6 +739,12 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         return {
             "images": [artifact],
             "passes": pass_results,
+            "preprocess": {
+                "max_input_long_side": MAX_INPUT_LONG_SIDE,
+                **resize_metadata,
+                "target_width": options["target_width"],
+                "target_height": options["target_height"],
+            },
         }
     except (ValueError, InstructionParseError, requests.RequestException, RuntimeError, TimeoutError) as exc:
         LOGGER.exception("Job failed")
