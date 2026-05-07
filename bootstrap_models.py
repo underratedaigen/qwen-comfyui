@@ -18,6 +18,7 @@ COMFY_QWEN_NODE = Path("/comfyui/comfy_extras/nodes_qwen.py")
 RUNPOD_VOLUME_ROOT = Path("/runpod-volume")
 RUNPOD_MODELS_ROOT = RUNPOD_VOLUME_ROOT / "models"
 COMFY_MODELS_ROOT = Path("/comfyui/models")
+MODEL_CACHE_ROOT = os.environ.get("QWEN_MODEL_CACHE_ROOT", "").strip()
 
 QWEN_CHECKPOINT_NAME = os.environ.get(
     "QWEN_CHECKPOINT_NAME",
@@ -55,7 +56,9 @@ def env_flag(name: str, default: bool = False) -> bool:
 
 
 def preferred_checkpoint_dir() -> Path:
-    if RUNPOD_VOLUME_ROOT.is_dir():
+    if MODEL_CACHE_ROOT:
+        path = Path(MODEL_CACHE_ROOT).expanduser() / "checkpoints"
+    elif RUNPOD_VOLUME_ROOT.is_dir():
         path = RUNPOD_MODELS_ROOT / "checkpoints"
     else:
         path = COMFY_MODELS_ROOT / "checkpoints"
@@ -64,12 +67,43 @@ def preferred_checkpoint_dir() -> Path:
 
 
 def preferred_schp_cache_dir() -> Path:
-    if RUNPOD_VOLUME_ROOT.is_dir():
+    if MODEL_CACHE_ROOT:
+        path = Path(MODEL_CACHE_ROOT).expanduser() / "schp"
+    elif RUNPOD_VOLUME_ROOT.is_dir():
         path = RUNPOD_MODELS_ROOT / "schp"
     else:
         path = COMFY_MODELS_ROOT / "schp"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def ensure_comfy_checkpoint_link(checkpoint_path: Path) -> Path:
+    comfy_checkpoint_path = COMFY_MODELS_ROOT / "checkpoints" / checkpoint_path.name
+    comfy_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if checkpoint_path == comfy_checkpoint_path:
+        return comfy_checkpoint_path
+
+    if comfy_checkpoint_path.is_symlink():
+        target = comfy_checkpoint_path.resolve(strict=False)
+        if target == checkpoint_path:
+            return comfy_checkpoint_path
+        comfy_checkpoint_path.unlink()
+
+    if comfy_checkpoint_path.exists():
+        LOGGER.info("Checkpoint already visible at %s", comfy_checkpoint_path)
+        return comfy_checkpoint_path
+
+    try:
+        comfy_checkpoint_path.symlink_to(checkpoint_path)
+        LOGGER.info("Created symlink %s -> %s", comfy_checkpoint_path, checkpoint_path)
+    except OSError:
+        LOGGER.warning(
+            "Could not create checkpoint symlink %s -> %s. ComfyUI may not see the cached checkpoint.",
+            comfy_checkpoint_path,
+            checkpoint_path,
+        )
+    return comfy_checkpoint_path
 
 
 def ensure_comfy_schp_link(cache_dir: Path) -> Path:
@@ -147,6 +181,7 @@ def main() -> None:
     if not env_flag("QWEN_SKIP_MODEL_DOWNLOAD", default=False):
         checkpoint_path = preferred_checkpoint_dir() / QWEN_CHECKPOINT_NAME
         ensure_file(checkpoint_path, QWEN_CHECKPOINT_URL)
+        ensure_comfy_checkpoint_link(checkpoint_path)
 
     if env_flag("QWEN_SKIP_PARSER_DOWNLOAD", default=False):
         LOGGER.info("Skipping parser model downloads because QWEN_SKIP_PARSER_DOWNLOAD=true")

@@ -175,13 +175,22 @@ INDEX_HTML = """<!doctype html>
   <div class="wrap">
     <div class="panel">
       <h1>Qwen v19 Clothing Edit Tester</h1>
-      <p>Upload a source image, describe the clothing change, and this page will submit the request to your RunPod endpoint and poll until the final image is ready.</p>
+      <p>Upload a source image, describe the clothing change, and this page will submit the request to either your RunPod Serverless endpoint or Pod API.</p>
       <form id="job-form">
         <div class="grid">
-          <label>RunPod Endpoint ID
-            <input name="endpoint_id" placeholder="biqd9c2lr7dqjn" required>
+          <label>Target
+            <select id="target-mode" name="target_mode">
+              <option value="serverless" selected>Serverless Endpoint</option>
+              <option value="pod">Pod API URL</option>
+            </select>
           </label>
-          <label>RunPod API Key
+          <label class="serverless-target">RunPod Endpoint ID
+            <input name="endpoint_id" placeholder="biqd9c2lr7dqjn">
+          </label>
+          <label class="pod-target hidden">Pod API URL
+            <input name="pod_api_url" placeholder="https://pod-id-8000.proxy.runpod.net">
+          </label>
+          <label>API Key / Pod API Key
             <input name="api_key" type="password" placeholder="rpa_..." required>
           </label>
         </div>
@@ -295,6 +304,11 @@ INDEX_HTML = """<!doctype html>
     const resultPreview = document.getElementById("result-preview");
     const sourcePreview = document.getElementById("source-preview");
     const imageFileInput = document.getElementById("image-file");
+    const targetModeSelect = document.getElementById("target-mode");
+    const endpointInput = form.elements.endpoint_id;
+    const podApiUrlInput = form.elements.pod_api_url;
+    const serverlessTargets = document.querySelectorAll(".serverless-target");
+    const podTargets = document.querySelectorAll(".pod-target");
     let pollHandle = null;
 
     function setState(label, text) {
@@ -335,6 +349,17 @@ INDEX_HTML = """<!doctype html>
       sourcePreview.src = await readFileAsDataUrl(file);
     });
 
+    function syncTargetMode() {
+      const isPod = targetModeSelect.value === "pod";
+      serverlessTargets.forEach((element) => element.classList.toggle("hidden", isPod));
+      podTargets.forEach((element) => element.classList.toggle("hidden", !isPod));
+      endpointInput.required = !isPod;
+      podApiUrlInput.required = isPod;
+    }
+
+    targetModeSelect.addEventListener("change", syncTargetMode);
+    syncTargetMode();
+
     async function pollStatus(localJobId) {
       if (pollHandle) {
         clearInterval(pollHandle);
@@ -346,7 +371,8 @@ INDEX_HTML = """<!doctype html>
         showResult(data);
 
         const label = data.state || "UNKNOWN";
-        const remote = data.remote_status ? ` | RunPod: ${data.remote_status}` : "";
+        const remoteBackend = data.remote_backend || "RunPod";
+        const remote = data.remote_status ? ` | ${remoteBackend}: ${data.remote_status}` : "";
         setState(label, (data.message || "Waiting") + remote);
 
         if (["COMPLETED", "FAILED"].includes(label)) {
@@ -502,6 +528,7 @@ def _is_transient_status_http_error(exc: urllib.error.HTTPError) -> bool:
 def _set_transient_status_error(
     local_job_id: str,
     *,
+    remote_backend: str,
     remote_job_id: str,
     remote_status: str,
     error_text: str,
@@ -512,9 +539,10 @@ def _set_transient_status_error(
         local_job_id,
         state="RUNNING",
         message=(
-            f"RunPod status check failed temporarily and will retry in "
+            f"{remote_backend} status check failed temporarily and will retry in "
             f"{retry_delay_seconds}s ({retry_count}/{MAX_TRANSIENT_STATUS_ERRORS}). Last error: {error_text}"
         ),
+        remote_backend=remote_backend,
         remote_job_id=remote_job_id,
         remote_status=remote_status,
         raw={
@@ -526,30 +554,50 @@ def _set_transient_status_error(
     )
 
 
-def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input: dict) -> None:
+def _target_urls(target_mode: str, endpoint_id: str, pod_api_url: str):
+    if target_mode == "pod":
+        base_url = pod_api_url.rstrip("/")
+        return base_url + "/run", lambda job_id: f"{base_url}/status/{job_id}", "Pod"
+
+    return (
+        f"https://api.runpod.ai/v2/{endpoint_id}/run",
+        lambda job_id: f"https://api.runpod.ai/v2/{endpoint_id}/status/{job_id}",
+        "RunPod",
+    )
+
+
+def _process_job(
+    local_job_id: str,
+    target_mode: str,
+    endpoint_id: str,
+    api_key: str,
+    pod_api_url: str,
+    runpod_input: dict,
+) -> None:
     headers = {"Authorization": f"Bearer {api_key}"}
     remote_job_id = ""
     remote_status = "PENDING"
     consecutive_status_errors = 0
+    submit_url, status_url_for_job, remote_backend = _target_urls(target_mode, endpoint_id, pod_api_url)
 
     try:
-        submit_url = f"https://api.runpod.ai/v2/{endpoint_id}/run"
         submit_response = _http_json("POST", submit_url, headers=headers, body={"input": runpod_input})
         remote_job_id = str(submit_response.get("id") or "")
         if not remote_job_id:
-            raise ValueError(f"RunPod response missing job id: {submit_response}")
+            raise ValueError(f"{remote_backend} response missing job id: {submit_response}")
         remote_status = str(submit_response.get("status", "IN_QUEUE"))
 
         _set_job(
             local_job_id,
             state="SUBMITTED",
-            message="Job accepted by RunPod.",
+            message=f"Job accepted by {remote_backend}.",
+            remote_backend=remote_backend,
             remote_job_id=remote_job_id,
             remote_status=remote_status,
             raw=submit_response,
         )
 
-        status_url = f"https://api.runpod.ai/v2/{endpoint_id}/status/{remote_job_id}"
+        status_url = status_url_for_job(remote_job_id)
         while True:
             try:
                 status_response = _http_json("GET", status_url, headers=headers)
@@ -564,9 +612,10 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
                         local_job_id,
                         state="FAILED",
                         message=(
-                            "RunPod status checks kept failing after "
+                            f"{remote_backend} status checks kept failing after "
                             f"{MAX_TRANSIENT_STATUS_ERRORS} retries. Last error: {error_text}"
                         ),
+                        remote_backend=remote_backend,
                         remote_job_id=remote_job_id,
                         remote_status=remote_status,
                         raw={
@@ -583,6 +632,7 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
                 )
                 _set_transient_status_error(
                     local_job_id,
+                    remote_backend=remote_backend,
                     remote_job_id=remote_job_id,
                     remote_status=remote_status,
                     error_text=error_text,
@@ -599,9 +649,10 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
                         local_job_id,
                         state="FAILED",
                         message=(
-                            "RunPod status checks kept failing after "
+                            f"{remote_backend} status checks kept failing after "
                             f"{MAX_TRANSIENT_STATUS_ERRORS} retries. Last error: {error_text}"
                         ),
+                        remote_backend=remote_backend,
                         remote_job_id=remote_job_id,
                         remote_status=remote_status,
                         raw={
@@ -618,6 +669,7 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
                 )
                 _set_transient_status_error(
                     local_job_id,
+                    remote_backend=remote_backend,
                     remote_job_id=remote_job_id,
                     remote_status=remote_status,
                     error_text=error_text,
@@ -632,7 +684,8 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
             _set_job(
                 local_job_id,
                 state="RUNNING" if remote_status not in {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"} else remote_status,
-                message="Waiting for RunPod to finish the job.",
+                message=f"Waiting for {remote_backend} to finish the job.",
+                remote_backend=remote_backend,
                 remote_job_id=remote_job_id,
                 remote_status=remote_status,
                 raw=status_response,
@@ -652,6 +705,7 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
                     local_job_id,
                     state="COMPLETED",
                     message="Image generation finished.",
+                    remote_backend=remote_backend,
                     remote_job_id=remote_job_id,
                     remote_status=remote_status,
                     raw=status_response,
@@ -665,6 +719,7 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
                     local_job_id,
                     state="FAILED",
                     message=str(error_text),
+                    remote_backend=remote_backend,
                     remote_job_id=remote_job_id,
                     remote_status=remote_status,
                     raw=status_response,
@@ -678,6 +733,7 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
             local_job_id,
             state="FAILED",
             message=f"HTTP {exc.code}: {details}",
+            remote_backend=remote_backend,
             remote_job_id=remote_job_id,
             remote_status=remote_status,
             raw={"error": details},
@@ -687,6 +743,7 @@ def _process_job(local_job_id: str, endpoint_id: str, api_key: str, runpod_input
             local_job_id,
             state="FAILED",
             message=str(exc),
+            remote_backend=remote_backend,
             remote_job_id=remote_job_id,
             remote_status=remote_status,
             raw={"error": str(exc)},
@@ -744,13 +801,19 @@ class QwenTesterHandler(BaseHTTPRequestHandler):
             raw_body = self.rfile.read(content_length)
             payload = json.loads(raw_body.decode("utf-8"))
 
+            target_mode = str(payload.get("target_mode", "serverless")).strip().lower()
             endpoint_id = str(payload.get("endpoint_id", "")).strip()
+            pod_api_url = str(payload.get("pod_api_url", "")).strip()
             api_key = str(payload.get("api_key", "")).strip()
             instruction = str(payload.get("instruction", "")).strip()
             image_data_url = str(payload.get("image_data_url", "")).strip()
 
-            if not endpoint_id:
+            if target_mode not in {"serverless", "pod"}:
+                raise ValueError("Target must be either serverless or pod.")
+            if target_mode == "serverless" and not endpoint_id:
                 raise ValueError("Endpoint ID is required.")
+            if target_mode == "pod" and not pod_api_url:
+                raise ValueError("Pod API URL is required.")
             if not api_key:
                 raise ValueError("API key is required.")
             if not instruction:
@@ -784,7 +847,8 @@ class QwenTesterHandler(BaseHTTPRequestHandler):
             _set_job(
                 local_job_id,
                 state="QUEUED",
-                message="Local proxy accepted the job and is sending it to RunPod.",
+                message="Local proxy accepted the job and is sending it to Pod." if target_mode == "pod" else "Local proxy accepted the job and is sending it to RunPod.",
+                remote_backend="Pod" if target_mode == "pod" else "RunPod",
                 remote_status="PENDING",
                 result={},
                 raw={},
@@ -792,7 +856,7 @@ class QwenTesterHandler(BaseHTTPRequestHandler):
 
             worker = threading.Thread(
                 target=_process_job,
-                args=(local_job_id, endpoint_id, api_key, runpod_input),
+                args=(local_job_id, target_mode, endpoint_id, api_key, pod_api_url, runpod_input),
                 daemon=True,
             )
             worker.start()
