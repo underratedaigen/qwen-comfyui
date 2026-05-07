@@ -4,7 +4,13 @@ This branch adds a Pod-only API path while leaving the Serverless entrypoint unc
 
 ## Build Settings
 
-Use these settings when creating the Pod image from GitHub:
+Option A, use the prebuilt GHCR image after this branch workflow finishes:
+
+```text
+Container image: ghcr.io/underratedaigen/qwen-comfyui:pod
+```
+
+Option B, build directly from GitHub:
 
 ```text
 Branch: codex/pod-api
