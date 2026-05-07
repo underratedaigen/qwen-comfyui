@@ -20,6 +20,15 @@ MAX_STATUS_RETRY_DELAY_SECONDS = 30
 TRANSIENT_STATUS_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 OUTPUT_DIR = Path(__file__).resolve().parent / "local_test_outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+HTTP_CLIENT_DEFAULT_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0 Safari/537.36"
+    ),
+}
 
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
@@ -453,7 +462,7 @@ def _json_response(handler: BaseHTTPRequestHandler, payload: dict, status: int =
 
 def _http_json(method: str, url: str, headers: dict | None = None, body: dict | None = None) -> dict:
     payload = None
-    final_headers = dict(headers or {})
+    final_headers = {**HTTP_CLIENT_DEFAULT_HEADERS, **dict(headers or {})}
     if body is not None:
         payload = json.dumps(body).encode("utf-8")
         final_headers["Content-Type"] = "application/json"
