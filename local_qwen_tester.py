@@ -534,6 +534,25 @@ def _is_transient_status_http_error(exc: urllib.error.HTTPError) -> bool:
     return exc.code in TRANSIENT_STATUS_HTTP_CODES
 
 
+def _normalize_pod_api_base_url(pod_api_url: str) -> str:
+    cleaned = pod_api_url.strip().replace("<", "").replace(">", "")
+    if not cleaned:
+        raise ValueError("Pod API URL is required.")
+
+    if "://" not in cleaned:
+        cleaned = f"https://{cleaned}"
+
+    parsed = urllib.parse.urlsplit(cleaned)
+    if not parsed.netloc:
+        raise ValueError("Pod API URL must include a host, for example https://pod-id-8000.proxy.runpod.net.")
+
+    host = parsed.netloc.lower()
+    if host.endswith(".proxy.runpod.net") and "-8000." not in host:
+        raise ValueError("Pod API URL must be the port 8000 proxy URL, for example https://pod-id-8000.proxy.runpod.net.")
+
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", "")).rstrip("/")
+
+
 def _set_transient_status_error(
     local_job_id: str,
     *,
@@ -565,7 +584,7 @@ def _set_transient_status_error(
 
 def _target_urls(target_mode: str, endpoint_id: str, pod_api_url: str):
     if target_mode == "pod":
-        base_url = pod_api_url.rstrip("/")
+        base_url = _normalize_pod_api_base_url(pod_api_url)
         return base_url + "/run", lambda job_id: f"{base_url}/status/{job_id}", "Pod"
 
     return (
